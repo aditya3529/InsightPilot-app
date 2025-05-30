@@ -1,63 +1,59 @@
-import streamlit as st
+import os
+import json
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import json
-import together
+import streamlit as st
 from pydantic import BaseModel, Field
+import together
 
-# Initialize Together client
-client = together.Together()
+# Initialize Together client with API key from Streamlit secrets
+client = together.Together(api_key=st.secrets["TOGETHER_API_KEY"])
 
 
-# Define structured response schema
+# Define structured response schema (optional for internal use)
 class ChurnInsight(BaseModel):
     title: str = Field(description="Insight title")
     summary: str = Field(description="Brief summary of the insight")
     actionItems: list[str] = Field(description="List of recommended actions")
 
 
-# Generate AI churn insight
+# Generate AI churn insight using Together.ai
 def generate_churn_insight(df: pd.DataFrame):
-    data_sample = df.sample(n=min(50, len(df)),
-                            random_state=1).to_csv(index=False)
+    data_sample = df.sample(n=min(50, len(df)), random_state=1).to_csv(index=False)
     prompt = f"""
-    You are a data analyst. Analyze the following customer churn dataset (CSV format).
-    Provide a JSON response with:
-    {{
-      title: string,
-      summary: string,
-      actionItems: [string]
-    }}
+You are a product analyst. Analyze the following customer churn dataset (CSV format). 
+Return a response in JSON format like this:
+{{
+  "title": "...",
+  "summary": "...",
+  "actionItems": ["...", "...", "..."]
+}}
 
-    Data:
-    {data_sample}
-    """
+Data:
+{data_sample}
+"""
 
-    response = client.chat.completions.create(
+    response = client.complete(
         model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
-        messages=[{
-            "role": "system",
-            "content": "You are a product analyst. Reply ONLY in JSON."
-        }, {
-            "role": "user",
-            "content": prompt
-        }],
-        response_format={
-            "type": "json_object",
-            "schema": ChurnInsight.model_json_schema()
-        },
+        prompt=prompt,
+        max_tokens=1024,
+        temperature=0.7,
     )
 
-    output = json.loads(response.choices[0].message.content)
-    return output
+    text_response = response["output"]["choices"][0]["text"].strip()
+
+    # Try parsing the returned JSON
+    try:
+        return json.loads(text_response)
+    except json.JSONDecodeError:
+        raise ValueError("Could not parse AI response as JSON:\n\n" + text_response)
 
 
 # Generate dummy data
 def generate_dummy_data():
     return pd.DataFrame({
-        'CustomerId':
-        range(1001, 1021),
+        'CustomerId': range(1001, 1021),
         'Surname': [f'User{i}' for i in range(20)],
         'CreditScore': [650 + i % 50 for i in range(20)],
         'Geography': ['France', 'Spain', 'Germany', 'France'] * 5,
@@ -127,9 +123,7 @@ if df is not None:
         # Visualizations
         st.subheader("📊 Churn Breakdown")
         fig1, ax1 = plt.subplots()
-        df['Exited'].value_counts().plot(kind='bar',
-                                         ax=ax1,
-                                         color=['green', 'red'])
+        df['Exited'].value_counts().plot(kind='bar', ax=ax1, color=['green', 'red'])
         ax1.set_xticklabels(['Retained', 'Churned'], rotation=0)
         ax1.set_ylabel("Customers")
         ax1.set_title("Churn Distribution")
@@ -143,12 +137,7 @@ if df is not None:
 
         st.subheader("🎯 Age vs. Churn")
         fig3, ax3 = plt.subplots()
-        sns.histplot(data=df,
-                     x="Age",
-                     hue="Exited",
-                     bins=20,
-                     multiple="stack",
-                     ax=ax3)
+        sns.histplot(data=df, x="Age", hue="Exited", bins=20, multiple="stack", ax=ax3)
         ax3.set_title("Age Distribution by Churn Status")
         st.pyplot(fig3)
 
@@ -174,3 +163,4 @@ if df is not None:
 
     except Exception as e:
         st.error(f"❌ Error processing data: {e}")
+
